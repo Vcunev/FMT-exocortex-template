@@ -79,7 +79,11 @@ def claude_payload(source: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
-def select_hooks(event: str, source: dict[str, Any]) -> list[str]:
+def select_hooks(event: str, source: dict[str, Any], profile: str = "default") -> list[str]:
+    if profile == "destructive-only":
+        if event == "PreToolUse" and str(source.get("tool_name", "")) == "Bash":
+            return ["destructive-guard.sh"]
+        return []
     if event not in ("PreToolUse", "PostToolUse"):
         return HOOKS.get(event, [])
     tool = str(source.get("tool_name", ""))
@@ -122,6 +126,7 @@ def iwe_memory_context() -> str:
 
 def main() -> int:
     event = sys.argv[1] if len(sys.argv) > 1 else ""
+    profile = sys.argv[2] if len(sys.argv) > 2 else "default"
     source = load_input()
     payload = claude_payload(source)
     env = os.environ.copy()
@@ -139,7 +144,7 @@ def main() -> int:
         if memory:
             contexts.append(memory)
 
-    for name in select_hooks(event, source):
+    for name in select_hooks(event, source, profile):
         script = CLAUDE_HOOKS / name
         if not script.is_file():
             continue
