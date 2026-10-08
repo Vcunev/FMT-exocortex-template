@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# PreToolUse:Bash guard — blocks irreversible git operations regardless of flag order.
+# see DP.SC.198
+# PreToolUse:Bash guard — blocks irreversible git/GitHub operations.
 # Complements the global rm -rf blocker (which forces `trash`). Exit 2 = block.
 set -euo pipefail
 
@@ -28,6 +29,47 @@ git_segment() {
 is_git_subcmd() {
   [ -n "$(git_segment "$1")" ]
 }
+
+github_fork_create_segment() {
+  # Match standard GitHub fork creation paths at the start of a shell segment
+  # while allowing harmless text searches and read-only GitHub operations.
+  perl -ne '
+    for my $segment (split /(?:&&|\|\||[;&|\n])/) {
+      $segment =~ s/^\s+//;
+      $segment =~ s/^(?:(?:command|sudo)\s+)+//;
+      $segment =~ s/^env(?:\s+[A-Za-z_][A-Za-z0-9_]*=\S+)*\s+//;
+      $segment =~ s/^(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)+//;
+
+      if ($segment =~ /^((?:\S*\/)?gh\s+repo\s+fork\b.*)$/) {
+        print "$1\n";
+        exit 0;
+      }
+
+      my $fork_endpoint = qr{(?:https://api\.github\.com/|/)?repos/[^/\s"\x27?]+/[^/\s"\x27?]+/forks/?(?:[?\s"\x27#]|$)}i;
+      my $explicit_get = $segment =~ /(?:^|\s)(?:-X(?:=|\s*)|--(?:method|request)(?:=|\s+))GET\b/i;
+      my $explicit_post = $segment =~ /(?:^|\s)(?:-X(?:=|\s*)|--(?:method|request)(?:=|\s+))POST\b/i;
+      my $gh_body = $segment =~ /(?:^|\s)(?:-[fF](?:\S+|\s)|--(?:field|raw-field|input)(?:=|\s|$))/;
+      my $curl_body = $segment =~ /(?:^|\s)(?:-d(?:\S+|\s)|--(?:data(?:-ascii|-binary|-raw|-urlencode)?|json)(?:=|\s|$))/;
+
+      if ($segment =~ /^(?:\S*\/)?gh\s+api\b/ && $segment =~ $fork_endpoint
+          && !$explicit_get && ($explicit_post || $gh_body)) {
+        print "$segment\n";
+        exit 0;
+      }
+      if ($segment =~ /^(?:\S*\/)?curl\b/ && $segment =~ $fork_endpoint
+          && !$explicit_get && ($explicit_post || $curl_body)) {
+        print "$segment\n";
+        exit 0;
+      }
+    }
+  ' <<< "$CMD"
+}
+
+# Agent-created GitHub forks are forbidden. A repository already owned by the
+# pilot does not need a fork; foreign repositories remain read-only by default.
+if [ -n "$(github_fork_create_segment)" ]; then
+  block "Создание GitHub fork агентом запрещено. Для чужого репозитория остановись и сообщи владельца пилоту."
+fi
 
 # git push --force / -f (allow the safe --force-with-lease)
 PUSH_SEGMENT=$(git_segment push)

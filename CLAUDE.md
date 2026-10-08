@@ -104,6 +104,10 @@ Hot-каркас ≤20K токенов (M1), строгая цель ≤12K (M2)
 
 **NEVER `git add -u`, `git add .`, `git add -A`** — подхватывают изменения ДРУГИХ агентов (Kimi/Hermes работают параллельно) → неверная атрибуция. Стейджить только конкретные файлы; перед коммитом `git diff --cached --name-only`, лишнее — `git restore --staged`. Примеры → `memory/reference/agent-core.md`.
 
+## GitHub Forks — CRITICAL
+
+**Агенту запрещено создавать GitHub fork любого репозитория** — ни через CLI, ни через API. Если для работы понадобился чужой репозиторий, агент останавливается, сообщает его владельца пилоту и ждёт отдельной прямой команды вместо создания fork.
+
 ## Artifact Naming
 
 **Do not invent artifact names.** Names for sections, documents, RPs, and deliverables must come from the plan/task you received. If the task is silent on a name — report "need clarification on name" instead of making one up.

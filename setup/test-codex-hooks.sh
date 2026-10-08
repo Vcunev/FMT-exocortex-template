@@ -14,16 +14,46 @@ python3 -m json.tool "$HOOKS_JSON" >/dev/null && ok "hooks.json is valid JSON"
 
 python3 - "$HOOKS_JSON" <<'PY' || fail "all required lifecycle events are configured"
 import json, sys
-events = set(json.load(open(sys.argv[1]))["hooks"])
+hooks = json.load(open(sys.argv[1]))["hooks"]
+events = set(hooks)
 required = {"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PreCompact", "Stop"}
 assert events == required, (required - events, events - required)
+pre = hooks["PreToolUse"]
+assert pre[0]["matcher"] == "Bash"
+assert pre[0]["hooks"][0]["command"].endswith("PreToolUse destructive-only")
+assert pre[0]["hooks"][0]["timeout"] == 5
 PY
-ok "all supported Claude lifecycle equivalents are configured"
+ok "all lifecycle events and the isolated destructive guard are configured"
 
-OUT=$(printf '%s' '{"hook_event_name":"PreToolUse","session_id":"test","cwd":"'"$ROOT"'","tool_name":"Bash","tool_input":{"command":"git reset --hard HEAD"}}' | python3 "$ADAPTER" PreToolUse)
+OUT=$(printf '%s' '{"hook_event_name":"PreToolUse","session_id":"test","cwd":"'"$ROOT"'","tool_name":"Bash","tool_input":{"command":"git reset --hard HEAD"}}' | python3 "$ADAPTER" PreToolUse destructive-only)
 python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["decision"]=="block" and d["reason"]' <<<"$OUT" \
   && ok "Bash destructive operation is blocked with Codex JSON semantics" \
   || fail "Bash destructive operation is blocked with Codex JSON semantics"
+
+OUT=$(printf '%s' '{"hook_event_name":"PreToolUse","session_id":"test","cwd":"'"$ROOT"'","tool_name":"Bash","tool_input":{"command":"gh repo fork external-owner/source-repo --clone=false"}}' | python3 "$ADAPTER" PreToolUse destructive-only)
+python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["decision"]=="block" and "fork" in d["reason"]' <<<"$OUT" \
+  && ok "GitHub fork creation is blocked with Codex JSON semantics" \
+  || fail "GitHub fork creation is blocked with Codex JSON semantics"
+
+OUT=$(printf '%s' '{"hook_event_name":"PreToolUse","session_id":"test","cwd":"'"$ROOT"'","tool_name":"Bash","tool_input":{"command":"gh api --method POST repos/external-owner/source-repo/forks"}}' | python3 "$ADAPTER" PreToolUse destructive-only)
+python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["decision"]=="block" and "fork" in d["reason"]' <<<"$OUT" \
+  && ok "GitHub REST fork creation is blocked with Codex JSON semantics" \
+  || fail "GitHub REST fork creation is blocked with Codex JSON semantics"
+
+OUT=$(printf '%s' '{"hook_event_name":"PreToolUse","session_id":"test","cwd":"'"$ROOT"'","tool_name":"Bash","tool_input":{"command":"gh api repos/external-owner/source-repo/forks -Forganization=pilot-org"}}' | python3 "$ADAPTER" PreToolUse destructive-only)
+python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["decision"]=="block" and "fork" in d["reason"]' <<<"$OUT" \
+  && ok "GitHub REST fork creation with attached field is blocked" \
+  || fail "GitHub REST fork creation with attached field is blocked"
+
+OUT=$(printf '%s' '{"hook_event_name":"PreToolUse","session_id":"test","cwd":"'"$ROOT"'","tool_name":"Bash","tool_input":{"command":"curl -X POST https://api.github.com/repos/external-owner/source-repo/forks/"}}' | python3 "$ADAPTER" PreToolUse destructive-only)
+python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["decision"]=="block" and "fork" in d["reason"]' <<<"$OUT" \
+  && ok "GitHub REST fork endpoint with trailing slash is blocked" \
+  || fail "GitHub REST fork endpoint with trailing slash is blocked"
+
+OUT=$(printf '%s' '{"hook_event_name":"PreToolUse","session_id":"test","cwd":"'"$ROOT"'","tool_name":"Bash","tool_input":{"command":"gh repo view pilot-owner/template-repo"}}' | python3 "$ADAPTER" PreToolUse destructive-only)
+python3 -c 'import json,sys; assert json.load(sys.stdin)=={}' <<<"$OUT" \
+  && ok "Read-only GitHub CLI operation remains allowed" \
+  || fail "Read-only GitHub CLI operation remains allowed"
 
 OUT=$(printf '%s' '{"hook_event_name":"UserPromptSubmit","session_id":"test","cwd":"'"$ROOT"'","prompt":"обычная новая задача"}' | python3 "$ADAPTER" UserPromptSubmit)
 python3 -c 'import json,sys; d=json.load(sys.stdin); o=d["hookSpecificOutput"]; assert o["hookEventName"]=="UserPromptSubmit" and "WP GATE" in o["additionalContext"]' <<<"$OUT" \

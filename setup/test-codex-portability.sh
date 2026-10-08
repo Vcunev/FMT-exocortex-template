@@ -123,7 +123,22 @@ if printf '%s\n' '{"tool_input":{"command":"git reset --hard HEAD"}}' \
   exit 1
 fi
 
+if printf '%s\n' '{"tool_input":{"command":"gh repo fork external-owner/source-repo --clone=false"}}' \
+  | bash "$REPO_ROOT/.claude/hooks/destructive-guard.sh" >/dev/null 2>&1; then
+  echo "FAIL: destructive guard allowed GitHub fork creation" >&2
+  exit 1
+fi
+
+if printf '%s\n' '{"tool_input":{"command":"curl --request POST https://api.github.com/repos/external-owner/source-repo/forks"}}' \
+  | bash "$REPO_ROOT/.claude/hooks/destructive-guard.sh" >/dev/null 2>&1; then
+  echo "FAIL: destructive guard allowed REST fork creation" >&2
+  exit 1
+fi
+
 printf '%s\n' '{"tool_input":{"command":"git status --short"}}' \
+  | bash "$REPO_ROOT/.claude/hooks/destructive-guard.sh" >/dev/null
+
+printf '%s\n' '{"tool_input":{"command":"gh repo view pilot-owner/template-repo"}}' \
   | bash "$REPO_ROOT/.claude/hooks/destructive-guard.sh" >/dev/null
 
 echo "PASS: Codex config, generated skills, adapter, and safety hook"
